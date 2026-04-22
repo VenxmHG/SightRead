@@ -1195,7 +1195,8 @@ bool is_fortnite_instrument(SightRead::Instrument instrument)
         SightRead::Instrument::FortniteDrums,
         SightRead::Instrument::FortniteVocals,
         SightRead::Instrument::FortniteProGuitar,
-        SightRead::Instrument::FortniteProBass};
+        SightRead::Instrument::FortniteProBass,
+        SightRead::Instrument::FortniteProDrums};
     return fortnite_instruments.contains(instrument);
 }
 
@@ -1400,7 +1401,9 @@ SightRead::Detail::MidiConverter::midi_section_instrument(
               SightRead::Instrument::FortniteDrums}},
             {"PART VOCALS", {SightRead::Instrument::FortniteVocals}},
             {"PLASTIC GUITAR", {SightRead::Instrument::FortniteProGuitar}},
-            {"PLASTIC BASS", {SightRead::Instrument::FortniteProBass}}};
+            {"PLASTIC BASS", {SightRead::Instrument::FortniteProBass}},
+            {"PLASTIC DRUM", {SightRead::Instrument::FortniteProDrums}},
+            {"PLASTIC DRUMS", {SightRead::Instrument::FortniteProDrums}}};
 
     const auto iter = INSTRUMENTS.find(track_name);
     if (iter == INSTRUMENTS.end()) {
@@ -1425,7 +1428,13 @@ void SightRead::Detail::MidiConverter::process_instrument_track(
 
     const auto sustain_threshold
         = sustain_cutoff_threshold(song.global_data().resolution());
-    if (is_fortnite_instrument(*inst)) {
+    if (*inst == SightRead::Instrument::FortniteProDrums) {
+        auto tracks = drum_note_tracks_from_midi(
+            track, song.global_data_ptr(), m_permit_solos, coda_event_time);
+        for (auto& [diff, note_track] : tracks) {
+            song.add_note_track(*inst, diff, std::move(note_track));
+        }
+    } else if (is_fortnite_instrument(*inst)) {
         auto tracks = fortnite_note_tracks_from_midi(
             track, song.global_data_ptr(), sustain_threshold, m_permit_solos,
             coda_event_time);

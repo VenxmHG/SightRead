@@ -37,7 +37,8 @@ enum class Instrument : std::uint8_t {
     FortniteDrums,
     FortniteVocals,
     FortniteProGuitar,
-    FortniteProBass
+    FortniteProBass,
+    FortniteProDrums
 };
 
 std::set<Instrument> all_instruments();

@@ -528,6 +528,7 @@ track_type_from_instrument(SightRead::Instrument instrument)
     case SightRead::Instrument::FortniteVocals:
     case SightRead::Instrument::FortniteProGuitar:
     case SightRead::Instrument::FortniteProBass:
+    case SightRead::Instrument::FortniteProDrums:
         throw std::invalid_argument(
             ".chart files not supported with Fortnite Festival");
     }

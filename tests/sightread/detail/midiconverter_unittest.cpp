@@ -10,6 +10,12 @@ SightRead::Detail::MidiConverter drums_only_converter()
         {SightRead::Instrument::Drums});
 }
 
+SightRead::Detail::MidiConverter fortnite_pro_drums_only_converter()
+{
+    return SightRead::Detail::MidiConverter({}).permit_instruments(
+        {SightRead::Instrument::FortniteProDrums});
+}
+
 SightRead::Detail::MidiConverter
 guitar_only_converter(SightRead::HopoThreshold hopo_threshold = {},
                       std::optional<int> sustain_cutoff_threshold = {})
@@ -2147,7 +2153,101 @@ BOOST_AUTO_TEST_CASE(fortnite_instrument_notes_are_separated)
                                  SightRead::Difficulty::Expert)
                           .notes()
                           .size(),
-                      2U);
+                       2U);
+}
+
+BOOST_AUTO_TEST_CASE(plastic_drum_is_read_as_fortnite_pro_drums)
+{
+    SightRead::Detail::MidiTrack note_track {
+        {{.time = 0, .event = {part_event("PLASTIC DRUM")}},
+         {.time = 0,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {98, 64}}}},
+         {.time = 45,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {120, 64}}}},
+         {.time = 65,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {98, 0}}}},
+         {.time = 75,
+          .event = {SightRead::Detail::MidiEvent {.status = 0x80,
+                                                  .data = {120, 0}}}}}};
+    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
+                                        .tracks = {note_track}};
+    const std::vector<SightRead::Instrument> expected_instruments {
+        SightRead::Instrument::FortniteProDrums};
+    const std::vector<SightRead::Note> expected_notes {
+        make_drum_note(0, SightRead::DRUM_YELLOW)};
+    const std::vector<SightRead::DrumFill> expected_fills {
+        {.position = SightRead::Tick {45}, .length = SightRead::Tick {30}}};
+
+    const auto song = fortnite_pro_drums_only_converter().convert(midi);
+    const auto instruments = song.instruments();
+    const auto& track = song.track(SightRead::Instrument::FortniteProDrums,
+                                   SightRead::Difficulty::Expert);
+
+    BOOST_CHECK_EQUAL_COLLECTIONS(instruments.cbegin(), instruments.cend(),
+                                  expected_instruments.cbegin(),
+                                  expected_instruments.cend());
+    BOOST_CHECK_EQUAL(track.track_type(), SightRead::TrackType::Drums);
+    BOOST_CHECK_EQUAL_COLLECTIONS(track.notes().cbegin(), track.notes().cend(),
+                                  expected_notes.cbegin(),
+                                  expected_notes.cend());
+    BOOST_CHECK_EQUAL_COLLECTIONS(track.drum_fills().cbegin(),
+                                  track.drum_fills().cend(),
+                                  expected_fills.cbegin(),
+                                  expected_fills.cend());
+}
+
+BOOST_AUTO_TEST_CASE(plastic_drums_is_read_as_fortnite_pro_drums)
+{
+    SightRead::Detail::MidiTrack note_track {
+        {{.time = 0, .event = {part_event("PLASTIC DRUMS")}},
+         {.time = 0,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {98, 64}}}},
+         {.time = 45,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {120, 64}}}},
+         {.time = 65,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {98, 0}}}},
+         {.time = 75,
+          .event = {SightRead::Detail::MidiEvent {.status = 0x80,
+                                                  .data = {120, 0}}}}}};
+    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
+                                        .tracks = {note_track}};
+
+    const auto song = fortnite_pro_drums_only_converter().convert(midi);
+    const auto& track = song.track(SightRead::Instrument::FortniteProDrums,
+                                   SightRead::Difficulty::Expert);
+
+    BOOST_CHECK_EQUAL(track.track_type(), SightRead::TrackType::Drums);
+    BOOST_CHECK_EQUAL(track.notes().size(), 1U);
+    BOOST_CHECK_EQUAL(track.drum_fills().size(), 1U);
+}
+
+BOOST_AUTO_TEST_CASE(part_drums_still_maps_to_fortnite_drums_track_type)
+{
+    SightRead::Detail::MidiTrack note_track {
+        {{.time = 0, .event = {part_event("PART DRUMS")}},
+         {.time = 0,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {96, 64}}}},
+         {.time = 65,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {96, 0}}}}}};
+    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
+                                        .tracks = {note_track}};
+
+    const auto song
+        = SightRead::Detail::MidiConverter({})
+              .permit_instruments({SightRead::Instrument::FortniteDrums})
+              .convert(midi);
+    const auto& track = song.track(SightRead::Instrument::FortniteDrums,
+                                   SightRead::Difficulty::Expert);
+
+    BOOST_CHECK_EQUAL(track.track_type(), SightRead::TrackType::FortniteFestival);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
