@@ -16,12 +16,18 @@ private:
     std::map<std::tuple<SightRead::Instrument, SightRead::Difficulty>,
              SightRead::NoteTrack>
         m_tracks;
+    std::map<std::tuple<SightRead::Instrument, SightRead::Difficulty>,
+             SightRead::VocalTrack>
+        m_vocal_tracks;
 
 public:
     Song() = default;
     void add_note_track(SightRead::Instrument instrument,
                         SightRead::Difficulty difficulty,
                         SightRead::NoteTrack note_track);
+    void add_vocal_track(SightRead::Instrument instrument,
+                         SightRead::Difficulty difficulty,
+                         SightRead::VocalTrack vocal_track);
     [[nodiscard]] SightRead::SongGlobalData& global_data()
     {
         return *m_global_data;
@@ -41,6 +47,9 @@ public:
     [[nodiscard]] const SightRead::NoteTrack&
     track(SightRead::Instrument instrument,
           SightRead::Difficulty difficulty) const;
+    [[nodiscard]] const SightRead::VocalTrack&
+    vocal_track(SightRead::Instrument instrument,
+                SightRead::Difficulty difficulty) const;
     [[nodiscard]] std::vector<SightRead::StarPower> unison_phrases() const;
     void speedup(int speed);
 };

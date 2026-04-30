@@ -314,6 +314,8 @@ difficulty_from_key(std::uint8_t key, SightRead::TrackType track_type,
                         {71, 77, SightRead::Difficulty::Medium}, // NOLINT
                         {59, 65, SightRead::Difficulty::Easy}}}; // NOLINT
         break;
+    case SightRead::TrackType::Vocals:
+        return std::nullopt;
     }
     return look_up_difficulty(diff_ranges, key);
 }
@@ -386,6 +388,8 @@ int colour_from_key(std::uint8_t key, SightRead::TrackType track_type,
         }
         return colour_from_key_and_bounds(key, diff_ranges, DRUM_NOTE_COLOURS);
     }
+    case SightRead::TrackType::Vocals:
+        throw SightRead::ParseError("Vocal tracks do not use lane colours");
     }
 
     throw std::invalid_argument("Invalid track type");
@@ -401,6 +405,8 @@ SightRead::NoteFlags flags_from_track_type(SightRead::TrackType track_type)
         return SightRead::FLAGS_SIX_FRET_GUITAR;
     case SightRead::TrackType::Drums:
         return SightRead::FLAGS_DRUMS;
+    case SightRead::TrackType::Vocals:
+        return SightRead::FLAGS_NONE;
     }
 
     throw std::invalid_argument("Invalid track type");
@@ -506,6 +512,198 @@ public:
 
     InstrumentMidiTrack() = default;
 };
+
+struct VocalMidiTrack {
+public:
+    std::map<int, std::vector<std::tuple<int, int>>> note_on_events;
+    std::map<int, std::vector<std::tuple<int, int>>> note_off_events;
+    std::vector<std::tuple<int, int>> phrase_on_events;
+    std::vector<std::tuple<int, int>> phrase_off_events;
+    std::vector<std::tuple<int, int>> sp_on_events;
+    std::vector<std::tuple<int, int>> sp_off_events;
+
+    VocalMidiTrack() = default;
+};
+
+bool is_vocal_pitch_key(std::uint8_t key)
+{
+    constexpr int MIN_VOCAL_PITCH = 36;
+    constexpr int MAX_VOCAL_PITCH = 84;
+
+    return key >= MIN_VOCAL_PITCH && key <= MAX_VOCAL_PITCH;
+}
+
+void add_vocal_note_off_event(VocalMidiTrack& track,
+                              const std::array<std::uint8_t, 2>& data,
+                              int time, int rank)
+{
+    constexpr int PHRASE_MARKER_ID = 105;
+    constexpr int PHRASE_MARKER_ALT_ID = 106;
+    constexpr int SP_NOTE_ID = 116;
+
+    if (data.at(0) == PHRASE_MARKER_ID || data.at(0) == PHRASE_MARKER_ALT_ID) {
+        track.phrase_off_events.emplace_back(time, rank);
+        return;
+    }
+    if (data.at(0) == SP_NOTE_ID) {
+        track.sp_off_events.emplace_back(time, rank);
+        return;
+    }
+    track.note_off_events[data.at(0)].emplace_back(time, rank);
+}
+
+void add_vocal_note_on_event(VocalMidiTrack& track,
+                             const std::array<std::uint8_t, 2>& data, int time,
+                             int rank)
+{
+    constexpr int PHRASE_MARKER_ID = 105;
+    constexpr int PHRASE_MARKER_ALT_ID = 106;
+    constexpr int SP_NOTE_ID = 116;
+
+    if (data.at(1) == 0) {
+        add_vocal_note_off_event(track, data, time, rank);
+        return;
+    }
+
+    if (data.at(0) == PHRASE_MARKER_ID || data.at(0) == PHRASE_MARKER_ALT_ID) {
+        track.phrase_on_events.emplace_back(time, rank);
+        return;
+    }
+    if (data.at(0) == SP_NOTE_ID) {
+        track.sp_on_events.emplace_back(time, rank);
+        return;
+    }
+    track.note_on_events[data.at(0)].emplace_back(time, rank);
+}
+
+VocalMidiTrack read_vocal_midi_track(const SightRead::Detail::MidiTrack& track)
+{
+    constexpr int NOTE_OFF_ID = 0x80;
+    constexpr int NOTE_ON_ID = 0x90;
+    constexpr int UPPER_NIBBLE_MASK = 0xF0;
+
+    VocalMidiTrack event_track;
+    int rank = 0;
+    for (const auto& event : track.events) {
+        ++rank;
+        const auto* midi_event
+            = std::get_if<SightRead::Detail::MidiEvent>(&event.event);
+        if (midi_event == nullptr) {
+            continue;
+        }
+        switch (midi_event->status & UPPER_NIBBLE_MASK) {
+        case NOTE_OFF_ID:
+            add_vocal_note_off_event(event_track, midi_event->data, event.time,
+                                     rank);
+            break;
+        case NOTE_ON_ID:
+            add_vocal_note_on_event(event_track, midi_event->data, event.time,
+                                    rank);
+            break;
+        default:
+            break;
+        }
+    }
+
+    return event_track;
+}
+
+std::vector<SightRead::LyricEvent>
+lyric_events_from_midi_track(const SightRead::Detail::MidiTrack& track)
+{
+    constexpr int LYRIC_EVENT_ID = 5;
+
+    std::vector<SightRead::LyricEvent> lyrics;
+    for (const auto& event : track.events) {
+        const auto* meta_event
+            = std::get_if<SightRead::Detail::MetaEvent>(&event.event);
+        if (meta_event == nullptr || meta_event->type != LYRIC_EVENT_ID) {
+            continue;
+        }
+        lyrics.push_back({.position = SightRead::Tick {event.time},
+                          .text = std::string {meta_event->data.cbegin(),
+                                               meta_event->data.cend()}});
+    }
+    return lyrics;
+}
+
+std::vector<std::tuple<int, int>>
+merge_overlapping_vocal_ranges(std::vector<std::tuple<int, int>> ranges)
+{
+    if (ranges.empty()) {
+        return {};
+    }
+
+    std::ranges::sort(ranges);
+
+    std::vector<std::tuple<int, int>> merged_ranges;
+    merged_ranges.push_back(ranges.front());
+    for (const auto& [start, end] : std::span {ranges}.subspan(1)) {
+        auto& [current_start, current_end] = merged_ranges.back();
+        if (start < current_end) {
+            current_end = std::max(current_end, end);
+            continue;
+        }
+        merged_ranges.emplace_back(start, end);
+    }
+    return merged_ranges;
+}
+
+std::optional<SightRead::VocalTrack>
+vocal_track_from_midi(const SightRead::Detail::MidiTrack& midi_track,
+                      const std::shared_ptr<SightRead::SongGlobalData>&
+                          global_data)
+{
+    const auto event_track = read_vocal_midi_track(midi_track);
+
+    std::vector<SightRead::VocalPhrase> phrases;
+    const auto phrase_ranges = merge_overlapping_vocal_ranges(
+        combine_note_on_off_events(event_track.phrase_on_events,
+                                   event_track.phrase_off_events));
+    for (const auto& [start, end] : phrase_ranges) {
+        phrases.push_back({.position = SightRead::Tick {start},
+                           .length = SightRead::Tick {end - start},
+                           .is_sp_phrase = false});
+    }
+    if (phrases.empty()) {
+        return std::nullopt;
+    }
+
+    std::vector<SightRead::StarPower> sp_ranges;
+    for (const auto& [start, end] : combine_note_on_off_events(
+             event_track.sp_on_events, event_track.sp_off_events)) {
+        sp_ranges.push_back({.position = SightRead::Tick {start},
+                             .length = SightRead::Tick {end - start}});
+    }
+    for (auto& phrase : phrases) {
+        phrase.is_sp_phrase = std::ranges::any_of(sp_ranges, [&](const auto& sp) {
+            return sp.position < phrase.position + phrase.length
+                && phrase.position < sp.position + sp.length;
+        });
+    }
+
+    std::vector<SightRead::VocalTube> tubes;
+    for (const auto& [pitch, note_ons] : event_track.note_on_events) {
+        const auto note_off_iter = event_track.note_off_events.find(pitch);
+        if (note_off_iter == event_track.note_off_events.cend()) {
+            throw SightRead::ParseError("No corresponding Vocal Note Off events");
+        }
+        for (const auto& [start, end] :
+             combine_note_on_off_events(note_ons, note_off_iter->second)) {
+            tubes.push_back({.position = SightRead::Tick {start},
+                             .length = SightRead::Tick {end - start},
+                             .pitch = pitch,
+                             .type = is_vocal_pitch_key(
+                                         static_cast<std::uint8_t>(pitch))
+                                     ? SightRead::VocalTubeType::Pitched
+                                     : SightRead::VocalTubeType::Unpitched});
+        }
+    }
+
+    return SightRead::VocalTrack {std::move(tubes),
+                                  lyric_events_from_midi_track(midi_track),
+                                  std::move(phrases), global_data};
+}
 
 bool is_tap_sysex_event(const SightRead::Detail::SysexEvent& event)
 {
@@ -1399,7 +1597,10 @@ SightRead::Detail::MidiConverter::midi_section_instrument(
             {"PART DRUMS",
              {SightRead::Instrument::Drums,
               SightRead::Instrument::FortniteDrums}},
-            {"PART VOCALS", {SightRead::Instrument::FortniteVocals}},
+            {"PRO VOCALS", {SightRead::Instrument::Vocals}},
+            {"PART VOCALS",
+             {SightRead::Instrument::FortniteVocals,
+              SightRead::Instrument::Vocals}},
             {"PLASTIC GUITAR", {SightRead::Instrument::FortniteProGuitar}},
             {"PLASTIC BASS", {SightRead::Instrument::FortniteProBass}},
             {"PLASTIC DRUM", {SightRead::Instrument::FortniteProDrums}},
@@ -1428,7 +1629,14 @@ void SightRead::Detail::MidiConverter::process_instrument_track(
 
     const auto sustain_threshold
         = sustain_cutoff_threshold(song.global_data().resolution());
-    if (*inst == SightRead::Instrument::FortniteProDrums) {
+    if (*inst == SightRead::Instrument::Vocals) {
+        const auto vocal_track = vocal_track_from_midi(track,
+                                                       song.global_data_ptr());
+        if (vocal_track.has_value()) {
+            song.add_vocal_track(*inst, SightRead::Difficulty::Expert,
+                                 std::move(*vocal_track));
+        }
+    } else if (*inst == SightRead::Instrument::FortniteProDrums) {
         auto tracks = drum_note_tracks_from_midi(
             track, song.global_data_ptr(), m_permit_solos, coda_event_time);
         for (auto& [diff, note_track] : tracks) {

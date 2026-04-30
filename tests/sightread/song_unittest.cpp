@@ -75,6 +75,45 @@ BOOST_AUTO_TEST_CASE(difficulties_returns_the_difficulties_for_an_instrument)
                                   drum_difficulties.cend());
 }
 
+BOOST_AUTO_TEST_CASE(vocal_tracks_participate_in_instruments_and_difficulties)
+{
+    SightRead::VocalTrack vocals_track {
+        {{.position = SightRead::Tick {192},
+          .length = SightRead::Tick {96},
+          .pitch = 60,
+          .type = SightRead::VocalTubeType::Pitched}},
+        {{.position = SightRead::Tick {192}, .text = "hey"}},
+        {{.position = SightRead::Tick {192},
+          .length = SightRead::Tick {192},
+          .is_sp_phrase = true}},
+        std::make_shared<SightRead::SongGlobalData>()};
+    SightRead::Song song;
+    song.add_vocal_track(SightRead::Instrument::Vocals,
+                         SightRead::Difficulty::Expert, vocals_track);
+
+    const std::vector<SightRead::Instrument> expected_instruments {
+        SightRead::Instrument::Vocals};
+    const std::vector<SightRead::Difficulty> expected_difficulties {
+        SightRead::Difficulty::Expert};
+
+    const auto parsed_instruments = song.instruments();
+    const auto parsed_difficulties
+        = song.difficulties(SightRead::Instrument::Vocals);
+
+    BOOST_CHECK_EQUAL_COLLECTIONS(parsed_instruments.cbegin(),
+                                  parsed_instruments.cend(),
+                                  expected_instruments.cbegin(),
+                                  expected_instruments.cend());
+    BOOST_CHECK_EQUAL_COLLECTIONS(
+        parsed_difficulties.cbegin(), parsed_difficulties.cend(),
+        expected_difficulties.cbegin(), expected_difficulties.cend());
+    BOOST_CHECK_EQUAL(song.vocal_track(SightRead::Instrument::Vocals,
+                                       SightRead::Difficulty::Expert)
+                          .phrases()
+                          .size(),
+                      1U);
+}
+
 BOOST_AUTO_TEST_SUITE(unison_phrases)
 
 // This is to test that unison bonuses can apply when at least 2

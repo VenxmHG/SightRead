@@ -15,10 +15,23 @@ void SightRead::Song::add_note_track(SightRead::Instrument instrument,
     }
 }
 
+void SightRead::Song::add_vocal_track(SightRead::Instrument instrument,
+                                      SightRead::Difficulty difficulty,
+                                      SightRead::VocalTrack vocal_track)
+{
+    if (!vocal_track.phrases().empty()) {
+        m_vocal_tracks.emplace(std::tuple {instrument, difficulty},
+                               std::move(vocal_track));
+    }
+}
+
 std::vector<SightRead::Instrument> SightRead::Song::instruments() const
 {
     std::set<SightRead::Instrument> instrument_set;
     for (const auto& [key, val] : m_tracks) {
+        instrument_set.insert(std::get<0>(key));
+    }
+    for (const auto& [key, val] : m_vocal_tracks) {
         instrument_set.insert(std::get<0>(key));
     }
 
@@ -33,6 +46,11 @@ SightRead::Song::difficulties(SightRead::Instrument instrument) const
 {
     std::vector<SightRead::Difficulty> difficulties;
     for (const auto& [key, val] : m_tracks) {
+        if (std::get<0>(key) == instrument) {
+            difficulties.push_back(std::get<1>(key));
+        }
+    }
+    for (const auto& [key, val] : m_vocal_tracks) {
         if (std::get<0>(key) == instrument) {
             difficulties.push_back(std::get<1>(key));
         }
@@ -55,6 +73,22 @@ SightRead::Song::track(SightRead::Instrument instrument,
             "Difficulty not available for chosen instrument");
     }
     return m_tracks.at({instrument, difficulty});
+}
+
+const SightRead::VocalTrack&
+SightRead::Song::vocal_track(SightRead::Instrument instrument,
+                             SightRead::Difficulty difficulty) const
+{
+    const auto insts = instruments();
+    if (std::ranges::find(insts, instrument) == std::ranges::end(insts)) {
+        throw std::invalid_argument("Chosen instrument not present in song");
+    }
+    const auto diffs = difficulties(instrument);
+    if (std::ranges::find(diffs, difficulty) == std::ranges::end(diffs)) {
+        throw std::invalid_argument(
+            "Difficulty not available for chosen instrument");
+    }
+    return m_vocal_tracks.at({instrument, difficulty});
 }
 
 std::vector<SightRead::StarPower> SightRead::Song::unison_phrases() const

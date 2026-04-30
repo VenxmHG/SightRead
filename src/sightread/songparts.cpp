@@ -56,7 +56,8 @@ std::set<Instrument> all_instruments()
             SightRead::Instrument::FortniteVocals,
             SightRead::Instrument::FortniteProGuitar,
             SightRead::Instrument::FortniteProBass,
-            SightRead::Instrument::FortniteProDrums};
+            SightRead::Instrument::FortniteProDrums,
+            SightRead::Instrument::Vocals};
 }
 }
 
@@ -159,7 +160,8 @@ void SightRead::NoteTrack::compute_base_score_ticks()
 void SightRead::NoteTrack::merge_same_time_notes()
 {
     if (m_track_type == TrackType::Drums
-        || m_track_type == TrackType::FortniteFestival) {
+        || m_track_type == TrackType::FortniteFestival
+        || m_track_type == TrackType::Vocals) {
         return;
     }
 
@@ -177,7 +179,8 @@ void SightRead::NoteTrack::merge_same_time_notes()
 
 void SightRead::NoteTrack::add_hopos(SightRead::Tick max_hopo_gap)
 {
-    if (m_track_type == TrackType::Drums) {
+    if (m_track_type == TrackType::Drums
+        || m_track_type == TrackType::Vocals) {
         return;
     }
 
@@ -410,6 +413,29 @@ SightRead::NoteTrack::snap_chords(SightRead::Tick snap_gap) const
     }
     new_track.merge_same_time_notes();
     return new_track;
+}
+
+SightRead::VocalTrack::VocalTrack(std::vector<VocalTube> tubes,
+                                  std::vector<LyricEvent> lyrics,
+                                  std::vector<VocalPhrase> phrases,
+                                  std::shared_ptr<SongGlobalData> global_data)
+    : m_track_type {TrackType::Vocals}
+    , m_global_data {std::move(global_data)}
+{
+    if (m_global_data == nullptr) {
+        throw std::runtime_error("Non-null global data required");
+    }
+
+    std::ranges::stable_sort(tubes, {},
+                             [](const auto& tube) { return tube.position; });
+    std::ranges::stable_sort(lyrics, {},
+                             [](const auto& lyric) { return lyric.position; });
+    std::ranges::stable_sort(phrases, {},
+                             [](const auto& phrase) { return phrase.position; });
+
+    m_tubes = std::move(tubes);
+    m_lyrics = std::move(lyrics);
+    m_phrases = std::move(phrases);
 }
 
 void SightRead::NoteTrack::disco_flips(

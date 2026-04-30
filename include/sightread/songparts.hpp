@@ -38,7 +38,8 @@ enum class Instrument : std::uint8_t {
     FortniteVocals,
     FortniteProGuitar,
     FortniteProBass,
-    FortniteProDrums
+    FortniteProDrums,
+    Vocals
 };
 
 std::set<Instrument> all_instruments();
@@ -47,7 +48,8 @@ enum class TrackType : std::uint8_t {
     FiveFret,
     SixFret,
     Drums,
-    FortniteFestival
+    FortniteFestival,
+    Vocals
 };
 
 enum NoteFlags : std::uint32_t {
@@ -120,6 +122,29 @@ public:
 struct StarPower {
     SightRead::Tick position;
     SightRead::Tick length;
+};
+
+enum class VocalTubeType : std::uint8_t {
+    Pitched,
+    Unpitched
+};
+
+struct VocalTube {
+    SightRead::Tick position;
+    SightRead::Tick length;
+    int pitch;
+    VocalTubeType type;
+};
+
+struct LyricEvent {
+    SightRead::Tick position;
+    std::string text;
+};
+
+struct VocalPhrase {
+    SightRead::Tick position;
+    SightRead::Tick length;
+    bool is_sp_phrase;
 };
 
 // A Solo spans [start, end), i.e. notes at time end aren't included. CH and
@@ -288,6 +313,38 @@ public:
     base_score(SightRead::DrumSettings drum_settings
                = SightRead::DrumSettings::default_settings()) const;
     [[nodiscard]] NoteTrack snap_chords(SightRead::Tick snap_gap) const;
+};
+
+class VocalTrack {
+private:
+    std::vector<VocalTube> m_tubes;
+    std::vector<LyricEvent> m_lyrics;
+    std::vector<VocalPhrase> m_phrases;
+    TrackType m_track_type;
+    std::shared_ptr<SongGlobalData> m_global_data;
+
+public:
+    VocalTrack(std::vector<VocalTube> tubes, std::vector<LyricEvent> lyrics,
+               std::vector<VocalPhrase> phrases,
+               std::shared_ptr<SongGlobalData> global_data);
+
+    [[nodiscard]] const std::vector<VocalTube>& tubes() const
+    {
+        return m_tubes;
+    }
+    [[nodiscard]] const std::vector<LyricEvent>& lyrics() const
+    {
+        return m_lyrics;
+    }
+    [[nodiscard]] const std::vector<VocalPhrase>& phrases() const
+    {
+        return m_phrases;
+    }
+    [[nodiscard]] TrackType track_type() const { return m_track_type; }
+    [[nodiscard]] const SongGlobalData& global_data() const
+    {
+        return *m_global_data;
+    }
 };
 }
 
