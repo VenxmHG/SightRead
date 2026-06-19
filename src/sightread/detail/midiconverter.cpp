@@ -1603,6 +1603,13 @@ void SightRead::Detail::MidiConverter::process_instrument_track(
             song.add_vocal_track(*inst, SightRead::Difficulty::Expert,
                                  std::move(*vocal_track));
         }
+    } else if (*inst == SightRead::Instrument::FortniteProDrums) {
+        auto tracks = drum_note_tracks_from_midi(
+            track, song.global_data_ptr(), sustain_threshold, m_permit_solos,
+            coda_event_time);
+        for (auto& [diff, note_track] : tracks) {
+            song.add_note_track(*inst, diff, std::move(note_track));
+        }
     } else if (is_fortnite_instrument(*inst)) {
         auto tracks = fortnite_note_tracks_from_midi(
             track, song.global_data_ptr(), sustain_threshold, m_permit_solos,
