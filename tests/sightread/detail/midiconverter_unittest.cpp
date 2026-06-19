@@ -10,18 +10,6 @@ SightRead::Detail::MidiConverter drums_only_converter()
         {SightRead::Instrument::Drums});
 }
 
-SightRead::Detail::MidiConverter fortnite_pro_drums_only_converter()
-{
-    return SightRead::Detail::MidiConverter({}).permit_instruments(
-        {SightRead::Instrument::FortniteProDrums});
-}
-
-SightRead::Detail::MidiConverter vocals_only_converter()
-{
-    return SightRead::Detail::MidiConverter({}).permit_instruments(
-        {SightRead::Instrument::Vocals});
-}
-
 SightRead::Detail::MidiConverter
 guitar_only_converter(SightRead::HopoThreshold hopo_threshold = {},
                       std::optional<int> sustain_cutoff_threshold = {})
@@ -45,12 +33,6 @@ SightRead::Detail::MetaEvent text_event(std::string_view text)
 {
     std::vector<std::uint8_t> bytes {text.cbegin(), text.cend()};
     return SightRead::Detail::MetaEvent {.type = 1, .data = bytes};
-}
-
-SightRead::Detail::MetaEvent lyric_event(std::string_view text)
-{
-    std::vector<std::uint8_t> bytes {text.cbegin(), text.cend()};
-    return SightRead::Detail::MetaEvent {.type = 5, .data = bytes};
 }
 }
 
@@ -645,6 +627,35 @@ BOOST_AUTO_TEST_CASE(open_notes_are_read_correctly)
         1 << SightRead::FIVE_FRET_OPEN);
 }
 
+BOOST_AUTO_TEST_CASE(length_zero_open_events_are_handled_correctly)
+{
+    SightRead::Detail::MidiTrack note_track {
+        {{.time = 0, .event = {part_event("PART GUITAR")}},
+         {.time = 768,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {96, 64}}}},
+         {.time = 768,
+          .event = {SightRead::Detail::SysexEvent {
+              {0x50, 0x53, 0, 0, 3, 1, 1, 0xF7}}}},
+         {.time = 768,
+          .event = {SightRead::Detail::SysexEvent {
+              {0x50, 0x53, 0, 0, 3, 1, 0, 0xF7}}}},
+         {.time = 960,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {96, 0}}}}}};
+    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
+                                        .tracks = {note_track}};
+
+    const auto song = guitar_only_converter().convert(midi);
+
+    BOOST_CHECK_EQUAL(
+        song.track(SightRead::Instrument::Guitar, SightRead::Difficulty::Expert)
+            .notes()
+            .at(0)
+            .colours(),
+        1 << SightRead::FIVE_FRET_OPEN);
+}
+
 BOOST_AUTO_TEST_CASE(parseerror_thrown_if_open_note_ons_have_no_note_offs)
 {
     SightRead::Detail::MidiTrack note_track {
@@ -750,7 +761,7 @@ BOOST_AUTO_TEST_CASE(open_chords_permitted_with_allow_open_chords_true)
         (1 << SightRead::FIVE_FRET_OPEN) | (1 << SightRead::FIVE_FRET_GREEN));
 }
 
-BOOST_AUTO_TEST_CASE(open_chords_forbidden_by_default)
+BOOST_AUTO_TEST_CASE(open_chords_allowed_by_default)
 {
     SightRead::Detail::MidiTrack note_track {{
         {.time = 0, .event = {part_event("PART GUITAR")}},
@@ -778,7 +789,7 @@ BOOST_AUTO_TEST_CASE(open_chords_forbidden_by_default)
             .notes()
             .at(0)
             .colours(),
-        1 << SightRead::FIVE_FRET_OPEN);
+        33);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
@@ -947,7 +958,7 @@ BOOST_AUTO_TEST_CASE(short_midi_sustains_are_trimmed)
     BOOST_CHECK_EQUAL(notes.at(1).lengths.at(0), SightRead::Tick {70});
 }
 
-BOOST_AUTO_TEST_CASE(metadata_cutoff_is_ignored_by_default)
+BOOST_AUTO_TEST_CASE(metadata_cutoff_is_used_by_default)
 {
     SightRead::Detail::MidiTrack note_track {
         {{.time = 0, .event = {part_event("PART GUITAR")}},
@@ -964,10 +975,10 @@ BOOST_AUTO_TEST_CASE(metadata_cutoff_is_ignored_by_default)
                                    SightRead::Difficulty::Expert)
                             .notes();
 
-    BOOST_CHECK_EQUAL(notes.at(0).lengths.at(0), SightRead::Tick {70});
+    BOOST_CHECK_EQUAL(notes.at(0).lengths.at(0), SightRead::Tick {0});
 }
 
-BOOST_AUTO_TEST_CASE(metadata_cutoff_is_used_if_flagged_to_use)
+BOOST_AUTO_TEST_CASE(metadata_cutoff_is_ignored_if_flagged_to_not_use)
 {
     SightRead::Detail::MidiTrack note_track {
         {{.time = 0, .event = {part_event("PART GUITAR")}},
@@ -976,24 +987,17 @@ BOOST_AUTO_TEST_CASE(metadata_cutoff_is_used_if_flagged_to_use)
           = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {96, 64}}}},
          {.time = 100,
           .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {96, 0}}}},
-         {.time = 200,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {96, 64}}}},
-         {.time = 301,
-          .event
           = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {96, 0}}}}}};
     const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 200,
                                         .tracks = {note_track}};
     const auto song = guitar_only_converter({}, 100)
-                          .use_sustain_cutoff_threshold(true)
+                          .use_sustain_cutoff_threshold(false)
                           .convert(midi);
     const auto& notes = song.track(SightRead::Instrument::Guitar,
                                    SightRead::Difficulty::Expert)
                             .notes();
 
-    BOOST_CHECK_EQUAL(notes.at(0).lengths.at(0), SightRead::Tick {0});
-    BOOST_CHECK_EQUAL(notes.at(1).lengths.at(0), SightRead::Tick {101});
+    BOOST_CHECK_EQUAL(notes.at(0).lengths.at(0), SightRead::Tick {100});
 }
 
 BOOST_AUTO_TEST_SUITE_END()
@@ -1245,6 +1249,106 @@ BOOST_AUTO_TEST_CASE(chords_can_be_forced)
 
     BOOST_CHECK_EQUAL(notes.at(1).flags,
                       SightRead::FLAGS_FORCE_HOPO | SightRead::FLAGS_HOPO
+                          | SightRead::FLAGS_FIVE_FRET_GUITAR);
+}
+
+BOOST_AUTO_TEST_CASE(length_zero_hopo_force_hopo_events_include_notes)
+{
+    SightRead::Detail::MidiTrack note_track {
+        {{.time = 0, .event = {part_event("PART GUITAR")}},
+         {.time = 0,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {96, 64}}}},
+         {.time = 0,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {101, 64}}}},
+         {.time = 0,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {101, 0}}}},
+         {.time = 1,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {96, 0}}}}}};
+    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 480,
+                                        .tracks = {note_track}};
+
+    const auto song = guitar_only_converter().convert(midi);
+    const auto notes = song.track(SightRead::Instrument::Guitar,
+                                  SightRead::Difficulty::Expert)
+                           .notes();
+
+    BOOST_CHECK_EQUAL(notes.at(0).flags,
+                      SightRead::FLAGS_FORCE_HOPO | SightRead::FLAGS_HOPO
+                          | SightRead::FLAGS_FIVE_FRET_GUITAR);
+}
+
+BOOST_AUTO_TEST_CASE(length_zero_hopo_force_strum_events_include_notes)
+{
+    SightRead::Detail::MidiTrack note_track {
+        {{.time = 0, .event = {part_event("PART GUITAR")}},
+         {.time = 0,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {96, 64}}}},
+         {.time = 1,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {96, 0}}}},
+         {.time = 2,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {97, 64}}}},
+         {.time = 2,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {102, 64}}}},
+         {.time = 2,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {102, 0}}}},
+         {.time = 3,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {97, 0}}}}}};
+    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 480,
+                                        .tracks = {note_track}};
+
+    const auto song = guitar_only_converter().convert(midi);
+    const auto notes = song.track(SightRead::Instrument::Guitar,
+                                  SightRead::Difficulty::Expert)
+                           .notes();
+
+    BOOST_CHECK_EQUAL(notes.at(1).flags,
+                      SightRead::FLAGS_FORCE_STRUM
+                          | SightRead::FLAGS_FIVE_FRET_GUITAR);
+}
+
+BOOST_AUTO_TEST_CASE(
+    positive_length_hopo_force_strum_events_exclude_notes_at_end)
+{
+    SightRead::Detail::MidiTrack note_track {
+        {{.time = 0, .event = {part_event("PART GUITAR")}},
+         {.time = 0,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {96, 64}}}},
+         {.time = 1,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {96, 0}}}},
+         {.time = 2,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {102, 64}}}},
+         {.time = 10,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {102, 0}}}},
+         {.time = 10,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {97, 64}}}},
+         {.time = 11,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {97, 0}}}}}};
+    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 480,
+                                        .tracks = {note_track}};
+
+    const auto song = guitar_only_converter().convert(midi);
+    const auto notes = song.track(SightRead::Instrument::Guitar,
+                                  SightRead::Difficulty::Expert)
+                           .notes();
+
+    BOOST_CHECK_EQUAL(notes.at(1).flags,
+                      SightRead::FLAGS_HOPO
                           | SightRead::FLAGS_FIVE_FRET_GUITAR);
 }
 
@@ -1704,9 +1808,34 @@ BOOST_AUTO_TEST_CASE(six_fret_guitar_coop_is_read_correctly)
                                   notes.cbegin(), notes.cend());
 }
 
+BOOST_AUTO_TEST_CASE(six_fret_keys_is_read_correctly)
+{
+    SightRead::Detail::MidiTrack note_track {
+        {{.time = 0, .event = {part_event("PART KEYS GHL")}},
+         {.time = 0,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {94, 64}}}},
+         {.time = 65,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {94, 0}}}}}};
+    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
+                                        .tracks = {note_track}};
+    const auto song = SightRead::Detail::MidiConverter({}).convert(midi);
+    const auto& track = song.track(SightRead::Instrument::GHLKeys,
+                                   SightRead::Difficulty::Expert);
+
+    std::vector<SightRead::Note> notes {
+        make_ghl_note(0, 65, SightRead::SIX_FRET_OPEN)};
+
+    BOOST_CHECK_EQUAL_COLLECTIONS(track.notes().cbegin(), track.notes().cend(),
+                                  notes.cbegin(), notes.cend());
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
-BOOST_AUTO_TEST_CASE(drums_are_read_correctly_from_mid)
+BOOST_AUTO_TEST_SUITE(drums_are_read_correctly_from_mid)
+
+BOOST_AUTO_TEST_CASE(drums_track_read_correctly_from_mid)
 {
     SightRead::Detail::MidiTrack note_track {
         {{.time = 0, .event = {part_event("PART DRUMS")}},
@@ -1716,10 +1845,10 @@ BOOST_AUTO_TEST_CASE(drums_are_read_correctly_from_mid)
          {.time = 0,
           .event
           = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {110, 64}}}},
-         {.time = 65,
+         {.time = 1,
           .event
           = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {98, 0}}}},
-         {.time = 65,
+         {.time = 1,
           .event = {SightRead::Detail::MidiEvent {.status = 0x80,
                                                   .data = {110, 0}}}}}};
     const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
@@ -1729,10 +1858,65 @@ BOOST_AUTO_TEST_CASE(drums_are_read_correctly_from_mid)
                                    SightRead::Difficulty::Expert);
 
     std::vector<SightRead::Note> notes {
-        make_drum_note(0, SightRead::DRUM_YELLOW)};
+        make_drum_note(0, 0, SightRead::DRUM_YELLOW)};
 
     BOOST_CHECK_EQUAL_COLLECTIONS(track.notes().cbegin(), track.notes().cend(),
                                   notes.cbegin(), notes.cend());
+}
+
+BOOST_AUTO_TEST_CASE(notes_at_end_of_tom_markers_are_cymbals)
+{
+    SightRead::Detail::MidiTrack note_track {
+        {{.time = 0, .event = {part_event("PART DRUMS")}},
+         {.time = 0,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {110, 64}}}},
+         {.time = 480,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {110, 0}}}},
+         {.time = 480,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {98, 64}}}},
+         {.time = 481,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {98, 0}}}}}};
+    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 480,
+                                        .tracks = {note_track}};
+    const auto song = drums_only_converter().convert(midi);
+    const auto& track = song.track(SightRead::Instrument::Drums,
+                                   SightRead::Difficulty::Expert);
+
+    const auto& note = track.notes().at(0);
+
+    BOOST_CHECK_EQUAL(note.flags,
+                      SightRead::FLAGS_DRUMS | SightRead::FLAGS_CYMBAL);
+}
+
+BOOST_AUTO_TEST_CASE(notes_at_end_of_zero_length_tom_markers_are_toms)
+{
+    SightRead::Detail::MidiTrack note_track {
+        {{.time = 0, .event = {part_event("PART DRUMS")}},
+         {.time = 480,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {110, 64}}}},
+         {.time = 480,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {110, 0}}}},
+         {.time = 480,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {98, 64}}}},
+         {.time = 481,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {98, 0}}}}}};
+    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 480,
+                                        .tracks = {note_track}};
+    const auto song = drums_only_converter().convert(midi);
+    const auto& track = song.track(SightRead::Instrument::Drums,
+                                   SightRead::Difficulty::Expert);
+
+    const auto& note = track.notes().at(0);
+
+    BOOST_CHECK_EQUAL(note.flags, SightRead::FLAGS_DRUMS);
 }
 
 BOOST_AUTO_TEST_CASE(double_kicks_are_read_correctly_from_mid)
@@ -1742,7 +1926,7 @@ BOOST_AUTO_TEST_CASE(double_kicks_are_read_correctly_from_mid)
          {.time = 0,
           .event
           = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {95, 64}}}},
-         {.time = 65,
+         {.time = 1,
           .event
           = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {95, 0}}}}}};
     const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
@@ -1752,7 +1936,7 @@ BOOST_AUTO_TEST_CASE(double_kicks_are_read_correctly_from_mid)
                                    SightRead::Difficulty::Expert);
 
     std::vector<SightRead::Note> notes {
-        make_drum_note(0, SightRead::DRUM_DOUBLE_KICK)};
+        make_drum_note(0, 0, SightRead::DRUM_DOUBLE_KICK)};
 
     BOOST_CHECK_EQUAL_COLLECTIONS(track.notes().cbegin(), track.notes().cend(),
                                   notes.cbegin(), notes.cend());
@@ -1915,10 +2099,10 @@ BOOST_AUTO_TEST_CASE(drum_five_lane_to_four_lane_conversion_is_done_from_mid)
                                    SightRead::Difficulty::Expert);
 
     std::vector<SightRead::Note> notes {
-        make_drum_note(0, SightRead::DRUM_GREEN),
-        make_drum_note(2, SightRead::DRUM_GREEN, SightRead::FLAGS_CYMBAL),
-        make_drum_note(4, SightRead::DRUM_BLUE),
-        make_drum_note(4, SightRead::DRUM_GREEN, SightRead::FLAGS_CYMBAL)};
+        make_drum_note(0, 0, SightRead::DRUM_GREEN),
+        make_drum_note(2, 0, SightRead::DRUM_GREEN, SightRead::FLAGS_CYMBAL),
+        make_drum_note(4, 0, SightRead::DRUM_BLUE),
+        make_drum_note(4, 0, SightRead::DRUM_GREEN, SightRead::FLAGS_CYMBAL)};
 
     BOOST_CHECK_EQUAL_COLLECTIONS(track.notes().cbegin(), track.notes().cend(),
                                   notes.cbegin(), notes.cend());
@@ -1952,6 +2136,31 @@ BOOST_AUTO_TEST_CASE(flam_sections_are_read_correctly)
                           | SightRead::FLAGS_FLAM);
 }
 
+BOOST_AUTO_TEST_CASE(drum_sustains_are_read_correctly)
+{
+    SightRead::Detail::MidiTrack note_track {
+        {{.time = 0, .event = {part_event("PART DRUMS")}},
+         {.time = 0,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {97, 64}}}},
+         {.time = 192,
+          .event
+          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {97, 0}}}}}};
+    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
+                                        .tracks = {note_track}};
+    const auto song = drums_only_converter().convert(midi);
+    const auto& track = song.track(SightRead::Instrument::Drums,
+                                   SightRead::Difficulty::Expert);
+
+    std::vector<SightRead::Note> notes {
+        make_drum_note(0, 192, SightRead::DRUM_RED)};
+
+    BOOST_CHECK_EQUAL_COLLECTIONS(track.notes().cbegin(), track.notes().cend(),
+                                  notes.cbegin(), notes.cend());
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 BOOST_AUTO_TEST_SUITE(dynamics_parsing)
 
 BOOST_AUTO_TEST_CASE(dynamics_are_parsed_from_mid)
@@ -1984,9 +2193,9 @@ BOOST_AUTO_TEST_CASE(dynamics_are_parsed_from_mid)
                                    SightRead::Difficulty::Expert);
 
     std::vector<SightRead::Note> notes {
-        make_drum_note(0, SightRead::DRUM_RED, SightRead::FLAGS_GHOST),
-        make_drum_note(2, SightRead::DRUM_RED),
-        make_drum_note(4, SightRead::DRUM_RED, SightRead::FLAGS_ACCENT)};
+        make_drum_note(0, 0, SightRead::DRUM_RED, SightRead::FLAGS_GHOST),
+        make_drum_note(2, 0, SightRead::DRUM_RED),
+        make_drum_note(4, 0, SightRead::DRUM_RED, SightRead::FLAGS_ACCENT)};
 
     BOOST_CHECK_EQUAL_COLLECTIONS(track.notes().cbegin(), track.notes().cend(),
                                   notes.cbegin(), notes.cend());
@@ -2008,7 +2217,8 @@ BOOST_AUTO_TEST_CASE(dynamics_not_parsed_from_mid_without_ENABLE_CHART_DYNAMICS)
     const auto& track = song.track(SightRead::Instrument::Drums,
                                    SightRead::Difficulty::Expert);
 
-    std::vector<SightRead::Note> notes {make_drum_note(0, SightRead::DRUM_RED)};
+    std::vector<SightRead::Note> notes {
+        make_drum_note(0, 0, SightRead::DRUM_RED)};
 
     BOOST_CHECK_EQUAL_COLLECTIONS(track.notes().cbegin(), track.notes().cend(),
                                   notes.cbegin(), notes.cend());
@@ -2032,7 +2242,7 @@ BOOST_AUTO_TEST_CASE(ENABLE_CHART_DYNAMICS_works_without_braces)
                                    SightRead::Difficulty::Expert);
 
     std::vector<SightRead::Note> notes {make_drum_note(
-        0, SightRead::DRUM_RED, SightRead::NoteFlags::FLAGS_GHOST)};
+        0, 0, SightRead::DRUM_RED, SightRead::NoteFlags::FLAGS_GHOST)};
 
     BOOST_CHECK_EQUAL_COLLECTIONS(track.notes().cbegin(), track.notes().cend(),
                                   notes.cbegin(), notes.cend());
@@ -2108,150 +2318,6 @@ BOOST_AUTO_TEST_CASE(solos_ignored_from_midis_if_not_permitted)
 
 BOOST_AUTO_TEST_SUITE(fortnite_instruments)
 
-BOOST_AUTO_TEST_CASE(pro_vocals_are_read_into_a_vocal_track)
-{
-    SightRead::Detail::MidiTrack vocals_track {
-        {{.time = 0, .event = {part_event("PRO VOCALS")}},
-         {.time = 0,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {105, 64}}}},
-         {.time = 0,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {116, 64}}}},
-         {.time = 10, .event = {lyric_event("Hel-")}},
-         {.time = 10,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {60, 64}}}},
-         {.time = 40,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {60, 0}}}},
-         {.time = 80,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {105, 0}}}},
-         {.time = 80,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {116, 0}}}}};
-    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
-                                        .tracks = {vocals_track}};
-
-    const auto song = vocals_only_converter().convert(midi);
-    const auto instruments = song.instruments();
-    const auto& track
-        = song.vocal_track(SightRead::Instrument::Vocals,
-                           SightRead::Difficulty::Expert);
-
-    const std::vector<SightRead::Instrument> expected_instruments {
-        SightRead::Instrument::Vocals};
-
-    BOOST_CHECK_EQUAL_COLLECTIONS(instruments.cbegin(), instruments.cend(),
-                                  expected_instruments.cbegin(),
-                                  expected_instruments.cend());
-    BOOST_CHECK_EQUAL(track.track_type(), SightRead::TrackType::Vocals);
-    BOOST_REQUIRE_EQUAL(track.phrases().size(), 1U);
-    BOOST_REQUIRE_EQUAL(track.tubes().size(), 1U);
-    BOOST_REQUIRE_EQUAL(track.lyrics().size(), 1U);
-    BOOST_CHECK(track.phrases().at(0).is_sp_phrase);
-    BOOST_CHECK_EQUAL(track.tubes().at(0).pitch, 60);
-    BOOST_CHECK_EQUAL(track.tubes().at(0).type,
-                      SightRead::VocalTubeType::Pitched);
-    BOOST_CHECK_EQUAL(track.lyrics().at(0).text, "Hel-");
-}
-
-BOOST_AUTO_TEST_CASE(part_vocals_maps_to_shared_vocals_when_permitted)
-{
-    SightRead::Detail::MidiTrack vocals_track {
-        {{.time = 0, .event = {part_event("PART VOCALS")}},
-         {.time = 0,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {105, 64}}}},
-         {.time = 10,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {60, 64}}}},
-         {.time = 40,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {60, 0}}}},
-         {.time = 80,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {105, 0}}}}};
-    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
-                                        .tracks = {vocals_track}};
-
-    const auto song = vocals_only_converter().convert(midi);
-    const auto& track
-        = song.vocal_track(SightRead::Instrument::Vocals,
-                           SightRead::Difficulty::Expert);
-
-    BOOST_CHECK_EQUAL(song.instruments().size(), 1U);
-    BOOST_CHECK_EQUAL(song.instruments().at(0), SightRead::Instrument::Vocals);
-    BOOST_REQUIRE_EQUAL(track.phrases().size(), 1U);
-    BOOST_REQUIRE_EQUAL(track.tubes().size(), 1U);
-}
-
-BOOST_AUTO_TEST_CASE(overlapping_part_vocal_phrase_markers_are_coalesced)
-{
-    SightRead::Detail::MidiTrack vocals_track {
-        {{.time = 0, .event = {part_event("PART VOCALS")}},
-         {.time = 0,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {105, 64}}}},
-         {.time = 0,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {106, 64}}}},
-         {.time = 0,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {116, 64}}}},
-         {.time = 10,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {60, 64}}}},
-         {.time = 40,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {60, 0}}}},
-         {.time = 80,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {105, 0}}}},
-         {.time = 80,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {106, 0}}}},
-         {.time = 80,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {116, 0}}}}};
-    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
-                                        .tracks = {vocals_track}};
-
-    const auto song = vocals_only_converter().convert(midi);
-    const auto& track
-        = song.vocal_track(SightRead::Instrument::Vocals,
-                           SightRead::Difficulty::Expert);
-
-    BOOST_REQUIRE_EQUAL(track.phrases().size(), 1U);
-    BOOST_CHECK(track.phrases().at(0).is_sp_phrase);
-    BOOST_CHECK_EQUAL(track.phrases().at(0).position, SightRead::Tick {0});
-    BOOST_CHECK_EQUAL(track.phrases().at(0).length, SightRead::Tick {80});
-}
-
-BOOST_AUTO_TEST_CASE(part_vocals_still_prefers_fortnite_legacy_when_permitted)
-{
-    SightRead::Detail::MidiTrack vocals_track {
-        {{.time = 0, .event = {part_event("PART VOCALS")}},
-         {.time = 0,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {60, 64}}}},
-         {.time = 80,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {60, 0}}}}};
-    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
-                                        .tracks = {vocals_track}};
-    const auto song
-        = SightRead::Detail::MidiConverter({})
-              .permit_instruments({SightRead::Instrument::FortniteVocals,
-                                   SightRead::Instrument::Vocals})
-              .convert(midi);
-
-    BOOST_CHECK_EQUAL(song.instruments().size(), 1U);
-    BOOST_CHECK_EQUAL(song.instruments().at(0),
-                      SightRead::Instrument::FortniteVocals);
-}
-
 BOOST_AUTO_TEST_CASE(ch_instruments_have_priority_over_fortnite)
 {
     SightRead::Detail::MidiTrack note_track {
@@ -2309,101 +2375,7 @@ BOOST_AUTO_TEST_CASE(fortnite_instrument_notes_are_separated)
                                  SightRead::Difficulty::Expert)
                           .notes()
                           .size(),
-                       2U);
-}
-
-BOOST_AUTO_TEST_CASE(plastic_drum_is_read_as_fortnite_pro_drums)
-{
-    SightRead::Detail::MidiTrack note_track {
-        {{.time = 0, .event = {part_event("PLASTIC DRUM")}},
-         {.time = 0,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {98, 64}}}},
-         {.time = 45,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {120, 64}}}},
-         {.time = 65,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {98, 0}}}},
-         {.time = 75,
-          .event = {SightRead::Detail::MidiEvent {.status = 0x80,
-                                                  .data = {120, 0}}}}}};
-    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
-                                        .tracks = {note_track}};
-    const std::vector<SightRead::Instrument> expected_instruments {
-        SightRead::Instrument::FortniteProDrums};
-    const std::vector<SightRead::Note> expected_notes {
-        make_drum_note(0, SightRead::DRUM_YELLOW)};
-    const std::vector<SightRead::DrumFill> expected_fills {
-        {.position = SightRead::Tick {45}, .length = SightRead::Tick {30}}};
-
-    const auto song = fortnite_pro_drums_only_converter().convert(midi);
-    const auto instruments = song.instruments();
-    const auto& track = song.track(SightRead::Instrument::FortniteProDrums,
-                                   SightRead::Difficulty::Expert);
-
-    BOOST_CHECK_EQUAL_COLLECTIONS(instruments.cbegin(), instruments.cend(),
-                                  expected_instruments.cbegin(),
-                                  expected_instruments.cend());
-    BOOST_CHECK_EQUAL(track.track_type(), SightRead::TrackType::Drums);
-    BOOST_CHECK_EQUAL_COLLECTIONS(track.notes().cbegin(), track.notes().cend(),
-                                  expected_notes.cbegin(),
-                                  expected_notes.cend());
-    BOOST_CHECK_EQUAL_COLLECTIONS(track.drum_fills().cbegin(),
-                                  track.drum_fills().cend(),
-                                  expected_fills.cbegin(),
-                                  expected_fills.cend());
-}
-
-BOOST_AUTO_TEST_CASE(plastic_drums_is_read_as_fortnite_pro_drums)
-{
-    SightRead::Detail::MidiTrack note_track {
-        {{.time = 0, .event = {part_event("PLASTIC DRUMS")}},
-         {.time = 0,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {98, 64}}}},
-         {.time = 45,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {120, 64}}}},
-         {.time = 65,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {98, 0}}}},
-         {.time = 75,
-          .event = {SightRead::Detail::MidiEvent {.status = 0x80,
-                                                  .data = {120, 0}}}}}};
-    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
-                                        .tracks = {note_track}};
-
-    const auto song = fortnite_pro_drums_only_converter().convert(midi);
-    const auto& track = song.track(SightRead::Instrument::FortniteProDrums,
-                                   SightRead::Difficulty::Expert);
-
-    BOOST_CHECK_EQUAL(track.track_type(), SightRead::TrackType::Drums);
-    BOOST_CHECK_EQUAL(track.notes().size(), 1U);
-    BOOST_CHECK_EQUAL(track.drum_fills().size(), 1U);
-}
-
-BOOST_AUTO_TEST_CASE(part_drums_still_maps_to_fortnite_drums_track_type)
-{
-    SightRead::Detail::MidiTrack note_track {
-        {{.time = 0, .event = {part_event("PART DRUMS")}},
-         {.time = 0,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x90, .data = {96, 64}}}},
-         {.time = 65,
-          .event
-          = {SightRead::Detail::MidiEvent {.status = 0x80, .data = {96, 0}}}}}};
-    const SightRead::Detail::Midi midi {.ticks_per_quarter_note = 192,
-                                        .tracks = {note_track}};
-
-    const auto song
-        = SightRead::Detail::MidiConverter({})
-              .permit_instruments({SightRead::Instrument::FortniteDrums})
-              .convert(midi);
-    const auto& track = song.track(SightRead::Instrument::FortniteDrums,
-                                   SightRead::Difficulty::Expert);
-
-    BOOST_CHECK_EQUAL(track.track_type(), SightRead::TrackType::FortniteFestival);
+                      2U);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

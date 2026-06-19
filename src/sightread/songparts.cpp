@@ -12,27 +12,23 @@ combined_note(std::vector<SightRead::Note>::const_iterator begin,
               std::vector<SightRead::Note>::const_iterator end)
 {
     SightRead::Note note = *begin;
-    ++begin;
-    while (begin < end) {
+    for (auto it = std::next(begin); it < end; ++it) {
         for (auto i = 0U; i < note.lengths.size(); ++i) {
-            const auto new_length = begin->lengths.at(i);
+            const auto new_length = it->lengths.at(i);
             if (new_length != SightRead::Tick {-1}) {
                 note.lengths.at(i) = new_length;
             }
         }
-        ++begin;
     }
     return note;
 }
 
 bool is_chord(const SightRead::Note& note)
 {
-    auto count = 0;
-    for (auto length : note.lengths) {
-        if (length != SightRead::Tick {-1}) {
-            ++count;
-        }
-    }
+    const auto count
+        = std::ranges::count_if(note.lengths, [](const auto length) {
+              return length != SightRead::Tick {-1};
+          });
     return count >= 2;
 }
 }
@@ -49,6 +45,7 @@ std::set<Instrument> all_instruments()
             SightRead::Instrument::GHLBass,
             SightRead::Instrument::GHLRhythm,
             SightRead::Instrument::GHLGuitarCoop,
+            SightRead::Instrument::GHLKeys,
             SightRead::Instrument::Drums,
             SightRead::Instrument::FortniteGuitar,
             SightRead::Instrument::FortniteBass,
@@ -211,9 +208,7 @@ void SightRead::NoteTrack::add_hopos(SightRead::Tick max_hopo_gap)
     }
 }
 
-SightRead::NoteTrack::NoteTrack(std::vector<Note> notes,
-                                const std::vector<StarPower>& sp_phrases,
-                                TrackType track_type,
+SightRead::NoteTrack::NoteTrack(std::vector<Note> notes, TrackType track_type,
                                 std::shared_ptr<SongGlobalData> global_data,
                                 bool allow_open_chords,
                                 SightRead::Tick max_hopo_gap)
@@ -238,29 +233,6 @@ SightRead::NoteTrack::NoteTrack(std::vector<Note> notes,
             prev_note = p;
         }
         m_notes.push_back(*prev_note);
-    }
-
-    std::vector<SightRead::Tick> sp_starts;
-    std::vector<SightRead::Tick> sp_ends;
-    sp_starts.reserve(sp_phrases.size());
-    sp_ends.reserve(sp_phrases.size());
-
-    for (const auto& phrase : sp_phrases) {
-        sp_starts.push_back(phrase.position);
-        sp_ends.push_back(phrase.position + phrase.length);
-    }
-
-    std::ranges::sort(sp_starts);
-    std::ranges::sort(sp_ends);
-
-    m_sp_phrases.reserve(sp_phrases.size());
-    for (auto i = 0U; i < sp_phrases.size(); ++i) {
-        auto start = sp_starts.at(i);
-        if (i > 0) {
-            start = std::max(sp_starts.at(i), sp_ends.at(i - 1));
-        }
-        const auto length = sp_ends.at(i) - start;
-        m_sp_phrases.push_back({.position = start, .length = length});
     }
 
     merge_same_time_notes();
@@ -345,6 +317,27 @@ void SightRead::NoteTrack::disable_dynamics()
     }
 }
 
+void SightRead::NoteTrack::sp_phrases(
+    std::vector<SightRead::StarPower> sp_phrases)
+{
+    const auto phrase_position = [](const auto& sp) { return sp.position; };
+
+    std::ranges::stable_sort(sp_phrases, {}, phrase_position);
+    const auto [begin, end]
+        = std::ranges::unique(sp_phrases, {}, phrase_position);
+    sp_phrases.erase(begin, end);
+
+    for (auto i = 0U; i + 1 < sp_phrases.size(); ++i) {
+        auto& current_phrase = sp_phrases.at(i);
+        auto& next_phrase = sp_phrases.at(i + 1);
+        const auto distance_to_next_phrase
+            = next_phrase.position - current_phrase.position;
+        current_phrase.length
+            = std::min(current_phrase.length, distance_to_next_phrase);
+    }
+    m_sp_phrases = std::move(sp_phrases);
+}
+
 std::vector<SightRead::Solo>
 SightRead::NoteTrack::solos(const SightRead::DrumSettings& drum_settings) const
 {
@@ -384,20 +377,28 @@ int SightRead::NoteTrack::base_score(
     SightRead::DrumSettings drum_settings) const
 {
     constexpr int BASE_NOTE_VALUE = 50;
+    constexpr int CYMBAL_NOTE_VALUE = 65;
 
-    auto note_count = 0;
+    auto cymbal_count = 0;
+    auto other_note_count = 0;
     for (const auto& note : m_notes) {
         if (note.is_skipped_kick(drum_settings)) {
             continue;
         }
         for (auto l : note.lengths) {
             if (l != SightRead::Tick {-1}) {
-                ++note_count;
+                if (drum_settings.pro_drums
+                    && (note.flags & SightRead::FLAGS_CYMBAL) != 0U) {
+                    ++cymbal_count;
+                } else {
+                    ++other_note_count;
+                }
             }
         }
     }
 
-    return BASE_NOTE_VALUE * note_count + m_base_score_ticks;
+    return CYMBAL_NOTE_VALUE * cymbal_count + BASE_NOTE_VALUE * other_note_count
+        + m_base_score_ticks;
 }
 
 SightRead::NoteTrack
@@ -446,7 +447,8 @@ void SightRead::NoteTrack::disco_flips(
     for (const auto& flip : disco_flips) {
         flips.emplace_back(flip.position, flip.position + flip.length);
     }
-    const ClosedIntervalSet<SightRead::Tick> flip_intervals {std::move(flips)};
+    const HalfOpenIntervalSet<SightRead::Tick> flip_intervals {
+        std::move(flips)};
 
     for (auto& note : m_notes) {
         note.flags = static_cast<SightRead::NoteFlags>(
@@ -553,17 +555,9 @@ void SightRead::NoteTrack::apply_flam_markers()
             }
         }
         new_notes.push_back(new_note);
-
-        if (((it->flags & SightRead::FLAGS_CYMBAL) == 0)
-            && (it->colours() == (1 << SightRead::DRUM_BLUE))) {
-            std::swap(it->lengths.at(SightRead::DRUM_BLUE),
-                      it->lengths.at(SightRead::DRUM_YELLOW));
-        }
     }
 
-    for (auto note : new_notes) {
-        m_notes.push_back(note);
-    }
+    m_notes.insert(m_notes.end(), new_notes.cbegin(), new_notes.cend());
 
     for (auto& note : m_notes) {
         note.flags = static_cast<SightRead::NoteFlags>(
