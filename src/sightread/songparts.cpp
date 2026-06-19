@@ -55,7 +55,9 @@ std::set<Instrument> all_instruments()
             SightRead::Instrument::FortniteDrums,
             SightRead::Instrument::FortniteVocals,
             SightRead::Instrument::FortniteProGuitar,
-            SightRead::Instrument::FortniteProBass};
+            SightRead::Instrument::FortniteProBass,
+            SightRead::Instrument::FortniteProDrums,
+            SightRead::Instrument::Vocals};
 }
 }
 
@@ -158,7 +160,8 @@ void SightRead::NoteTrack::compute_base_score_ticks()
 void SightRead::NoteTrack::merge_same_time_notes()
 {
     if (m_track_type == TrackType::Drums
-        || m_track_type == TrackType::FortniteFestival) {
+        || m_track_type == TrackType::FortniteFestival
+        || m_track_type == TrackType::Vocals) {
         return;
     }
 
@@ -176,7 +179,8 @@ void SightRead::NoteTrack::merge_same_time_notes()
 
 void SightRead::NoteTrack::add_hopos(SightRead::Tick max_hopo_gap)
 {
-    if (m_track_type == TrackType::Drums) {
+    if (m_track_type == TrackType::Drums
+        || m_track_type == TrackType::Vocals) {
         return;
     }
 
@@ -207,7 +211,9 @@ void SightRead::NoteTrack::add_hopos(SightRead::Tick max_hopo_gap)
     }
 }
 
-SightRead::NoteTrack::NoteTrack(std::vector<Note> notes, TrackType track_type,
+SightRead::NoteTrack::NoteTrack(std::vector<Note> notes,
+                                const std::vector<StarPower>& sp_phrases,
+                                TrackType track_type,
                                 std::shared_ptr<SongGlobalData> global_data,
                                 bool allow_open_chords,
                                 SightRead::Tick max_hopo_gap)
@@ -232,6 +238,29 @@ SightRead::NoteTrack::NoteTrack(std::vector<Note> notes, TrackType track_type,
             prev_note = p;
         }
         m_notes.push_back(*prev_note);
+    }
+
+    std::vector<SightRead::Tick> sp_starts;
+    std::vector<SightRead::Tick> sp_ends;
+    sp_starts.reserve(sp_phrases.size());
+    sp_ends.reserve(sp_phrases.size());
+
+    for (const auto& phrase : sp_phrases) {
+        sp_starts.push_back(phrase.position);
+        sp_ends.push_back(phrase.position + phrase.length);
+    }
+
+    std::ranges::sort(sp_starts);
+    std::ranges::sort(sp_ends);
+
+    m_sp_phrases.reserve(sp_phrases.size());
+    for (auto i = 0U; i < sp_phrases.size(); ++i) {
+        auto start = sp_starts.at(i);
+        if (i > 0) {
+            start = std::max(sp_starts.at(i), sp_ends.at(i - 1));
+        }
+        const auto length = sp_ends.at(i) - start;
+        m_sp_phrases.push_back({.position = start, .length = length});
     }
 
     merge_same_time_notes();
@@ -316,37 +345,6 @@ void SightRead::NoteTrack::disable_dynamics()
     }
 }
 
-void SightRead::NoteTrack::sp_phrases(
-    const std::vector<SightRead::StarPower>& sp_phrases)
-{
-    std::vector<SightRead::Tick> sp_starts;
-    std::vector<SightRead::Tick> sp_ends;
-    sp_starts.reserve(sp_phrases.size());
-    sp_ends.reserve(sp_phrases.size());
-
-    for (const auto& phrase : sp_phrases) {
-        sp_starts.push_back(phrase.position);
-        sp_ends.push_back(phrase.position + phrase.length);
-    }
-
-    std::ranges::sort(sp_starts);
-    std::ranges::sort(sp_ends);
-
-    m_sp_phrases.reserve(sp_phrases.size());
-    for (auto i = 0U; i < sp_phrases.size(); ++i) {
-        if (i > 0 && sp_starts.at(i) == sp_starts.at(i - 1)
-            && sp_ends.at(i) == sp_ends.at(i - 1)) {
-            continue;
-        }
-        auto start = sp_starts.at(i);
-        if (i > 0) {
-            start = std::max(sp_starts.at(i), sp_ends.at(i - 1));
-        }
-        const auto length = sp_ends.at(i) - start;
-        m_sp_phrases.push_back({.position = start, .length = length});
-    }
-}
-
 std::vector<SightRead::Solo>
 SightRead::NoteTrack::solos(const SightRead::DrumSettings& drum_settings) const
 {
@@ -417,6 +415,29 @@ SightRead::NoteTrack::snap_chords(SightRead::Tick snap_gap) const
     return new_track;
 }
 
+SightRead::VocalTrack::VocalTrack(std::vector<VocalTube> tubes,
+                                  std::vector<LyricEvent> lyrics,
+                                  std::vector<VocalPhrase> phrases,
+                                  std::shared_ptr<SongGlobalData> global_data)
+    : m_track_type {TrackType::Vocals}
+    , m_global_data {std::move(global_data)}
+{
+    if (m_global_data == nullptr) {
+        throw std::runtime_error("Non-null global data required");
+    }
+
+    std::ranges::stable_sort(tubes, {},
+                             [](const auto& tube) { return tube.position; });
+    std::ranges::stable_sort(lyrics, {},
+                             [](const auto& lyric) { return lyric.position; });
+    std::ranges::stable_sort(phrases, {},
+                             [](const auto& phrase) { return phrase.position; });
+
+    m_tubes = std::move(tubes);
+    m_lyrics = std::move(lyrics);
+    m_phrases = std::move(phrases);
+}
+
 void SightRead::NoteTrack::disco_flips(
     const std::vector<DiscoFlip>& disco_flips)
 {
@@ -425,8 +446,7 @@ void SightRead::NoteTrack::disco_flips(
     for (const auto& flip : disco_flips) {
         flips.emplace_back(flip.position, flip.position + flip.length);
     }
-    const HalfOpenIntervalSet<SightRead::Tick> flip_intervals {
-        std::move(flips)};
+    const ClosedIntervalSet<SightRead::Tick> flip_intervals {std::move(flips)};
 
     for (auto& note : m_notes) {
         note.flags = static_cast<SightRead::NoteFlags>(

@@ -496,10 +496,9 @@ note_track_from_section(const SightRead::Detail::ChartSection& section,
         disco_flips.push_back({.position = start, .length = end - start});
     }
 
-    SightRead::NoteTrack note_track {std::move(notes), track_type,
-                                     std::move(global_data), allow_open_chords,
-                                     max_hopo_gap};
-    note_track.sp_phrases(sp);
+    SightRead::NoteTrack note_track {std::move(notes),  sp,
+                                     track_type,        std::move(global_data),
+                                     allow_open_chords, max_hopo_gap};
     note_track.solos(std::move(solos));
     note_track.drum_fills(std::move(fills));
     note_track.disco_flips(disco_flips);
@@ -529,6 +528,7 @@ track_type_from_instrument(SightRead::Instrument instrument)
     case SightRead::Instrument::FortniteVocals:
     case SightRead::Instrument::FortniteProGuitar:
     case SightRead::Instrument::FortniteProBass:
+    case SightRead::Instrument::FortniteProDrums:
         throw std::invalid_argument(
             ".chart files not supported with Fortnite Festival");
     }
